@@ -8,11 +8,12 @@ from django.contrib.sites.models import get_current_site
 from django.core.exceptions import ValidationError
 from django.core.urlresolvers import reverse, NoReverseMatch
 from django.core.validators import validate_email
-from modeltree.tree import MODELTREE_DEFAULT_ALIAS
 from avocado.models import DataContext, DataView, DataQuery
 from avocado.query import pipeline
 from serrano import utils
 from serrano.conf import settings
+from serrano.resources.base import extract_model_version, get_count
+import datetime
 
 log = logging.getLogger(__name__)
 
@@ -20,13 +21,16 @@ SHARED_QUERY_EMAIL_TITLE = '{site_name}: {query_name} has been shared with '\
                            'you!'
 SHARED_QUERY_EMAIL_BODY = 'View the query at {query_url}'
 
-
 class ContextForm(forms.ModelForm):
     def __init__(self, request, *args, **kwargs):
         self.request = request
         self.count_needs_update = kwargs.pop('force_count', None)
         self.processor = kwargs.pop('processor', 'default')
-        self.tree = kwargs.pop('tree', MODELTREE_DEFAULT_ALIAS)
+        self.tree = kwargs.pop('tree', 'assessments')
+        self.id = kwargs.pop('identifier', None)
+        self.json = kwargs.pop('json', None)
+        self.name = kwargs.pop('name', None)
+        self.keywords = kwargs.pop('keywords', None)
 
         super(ContextForm, self).__init__(*args, **kwargs)
 
@@ -43,9 +47,12 @@ class ContextForm(forms.ModelForm):
                 self.count_needs_update = False
         return json
 
-    def save(self, commit=True):
+    def save(self, commit=True, update_count=True):
         instance = super(ContextForm, self).save(commit=False)
         request = self.request
+        
+        model_version = extract_model_version(request)
+        instance.model_version_id = model_version['id']
 
         if getattr(request, 'user', None) and request.user.is_authenticated():
             instance.user = request.user
@@ -56,19 +63,45 @@ class ContextForm(forms.ModelForm):
         processor = QueryProcessor(tree=self.tree)
         queryset = processor.get_queryset(request=request)
 
+
+        if self.id:
+            instance.id = self.id
+
+        if self.json:
+            instance.json = self.json
+
+        if self.name:
+            instance.name = self.name
+
+        if self.keywords:
+            instance.keywords = self.keywords
+
+        if commit:
+            instance.save()
+
         # Only recalculated count if conditions exist. This is to
         # prevent re-counting the entire dataset. An alternative
         # solution may be desirable such as pre-computing and
         # caching the count ahead of time.
-        if self.count_needs_update:
-            instance.count = \
-                instance.apply(queryset=queryset).distinct().count()
-            self.count_needs_update = False
-        else:
-            instance.count = None
+        if update_count:
+            count_start = datetime.datetime.now()
 
-        if commit:
-            instance.save()
+            if self.count_needs_update:
+                if model_version['model_type']=='project':
+                    apply_query = instance.apply(queryset=queryset, distinct=False)
+                    count = get_count(apply_query)
+                else:
+                    count = instance.apply(queryset=queryset).distinct().count()
+                self.count_needs_update = False
+            else:
+                count = None
+
+            instance = DataContext.objects.get(id=instance.id)
+
+            # save count only if no new filters were added during calculation
+            if commit and instance.modified<=count_start:
+                instance.count = count
+                instance.save()
 
         return instance
 
@@ -85,6 +118,8 @@ class ViewForm(forms.ModelForm):
     def save(self, commit=True):
         instance = super(ViewForm, self).save(commit=False)
         request = self.request
+            
+        instance.model_version_id = extract_model_version(request)['id']
 
         if getattr(request, 'user', None) and request.user.is_authenticated():
             instance.user = request.user
@@ -98,7 +133,7 @@ class ViewForm(forms.ModelForm):
 
     class Meta(object):
         model = DataView
-        fields = ('name', 'description', 'keywords', 'json', 'session')
+        fields = ('name', 'description', 'keywords', 'json', 'session', 'model_version_id')
 
 
 class QueryForm(forms.ModelForm):
@@ -178,6 +213,9 @@ class QueryForm(forms.ModelForm):
         instance = super(QueryForm, self).save(commit=False)
         request = self.request
 
+        model_version = extract_model_version(request)
+        instance.tree = model_version['model_name']
+
         if getattr(request, 'user', None) and request.user.is_authenticated():
             instance.user = request.user
         else:
@@ -188,7 +226,11 @@ class QueryForm(forms.ModelForm):
         # solution may be desirable such as pre-computing and
         # caching the count ahead of time.
         if self.count_needs_update_context:
-            instance.distinct_count = instance.apply().distinct().count()
+            if model_version['model_type']=='project':
+                apply_query = instance.apply(distinct=False)
+                get_count(apply_query)
+            else:
+                instance.distinct_count = instance.apply().distinct().count()
             self.count_needs_update_context = False
         else:
             instance.distinct_count = None

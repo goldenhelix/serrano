@@ -9,7 +9,7 @@ from avocado.events import usage
 from avocado.models import DataConcept, DataCategory
 from avocado.conf import OPTIONAL_DEPS
 from serrano.resources.field import FieldResource
-from .base import ThrottledResource, SAFE_METHODS
+from .base import ThrottledResource, SAFE_METHODS, extract_model_version, page_type
 from . import templates
 from .field import base as FieldResources
 
@@ -99,10 +99,15 @@ class ConceptBase(ThrottledResource):
 
     parametizer = ConceptParametizer
 
-    def get_queryset(self, request):
+    def get_queryset(self, request, **kwargs):
+        model_version = extract_model_version(request)
+
         queryset = self.model.objects.all()
+        queryset = queryset.published(model_version_id=model_version['id'])
+        
         if not can_change_concept(request.user):
-            queryset = queryset.published(user=request.user)
+            queryset = queryset.published(user=request.user, model_version_id=model_version['id'])
+
         return queryset
 
     def get_object(self, request, **kwargs):
@@ -143,7 +148,18 @@ class ConceptBase(ThrottledResource):
             concept_posthook, request=request, embed=embed, brief=brief,
             categories=categories)
 
-        return serialize(objects, posthook=posthook, **template)
+        concepts = serialize(objects, posthook=posthook, **template)
+
+        # only show non-matrix fields on results page
+        if '/results/' in request.META['HTTP_REFERER']:
+            locus_concepts = []
+            for c in concepts:
+                data_concept = DataConcept.objects.get(id=c['id'])
+                if not data_concept.model_type=='matrix':
+                    locus_concepts.append(c)
+            return locus_concepts
+         
+        return concepts
 
     def is_forbidden(self, request, response, *args, **kwargs):
         "Ensure non-privileged users cannot make any changes."
@@ -250,6 +266,14 @@ class ConceptsResource(ConceptBase):
                 if not has_orphaned_field(obj):
                     pks.append(obj.pk)
             objects = self.model.objects.filter(pk__in=pks)
+
+        # TODO: We still need to hard-filter these, but 
+        # we could maybe break this abstraction sometime 
+        # down to road to clean things up.
+        if page_type(request)=='results':
+            objects = objects.exclude(name="Genomic Position")
+        elif page_type(request)=='query':
+            objects = objects.exclude(name="Genomic Coordinate")
 
         return self.prepare(request, objects, **params)
 

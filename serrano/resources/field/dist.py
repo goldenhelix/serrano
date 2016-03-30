@@ -2,17 +2,29 @@ from decimal import Decimal
 from django.db.models import Q
 from restlib2.http import codes
 from restlib2.params import Parametizer, StrParam, BoolParam, IntParam
-from modeltree.tree import MODELTREE_DEFAULT_ALIAS, trees
+from modeltree.tree import trees
 from avocado.events import usage
 from avocado.models import DataField
 from avocado.query import pipeline
 from avocado.stats import kmeans
 from .base import FieldBase
-
+from serrano.resources.base import extract_model_version
 
 MINIMUM_OBSERVATIONS = 500
 MAXIMUM_OBSERVATIONS = 50000
 
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+def all_numbers(l):
+    for value in l:
+        if not is_number(str(value)):
+            return False
+    return True
 
 class FieldDistParametizer(Parametizer):
     aware = BoolParam(False)
@@ -21,7 +33,6 @@ class FieldDistParametizer(Parametizer):
     nulls = BoolParam(False)
     processor = StrParam('default', choices=pipeline.query_processors)
     sort = StrParam()
-    tree = StrParam(MODELTREE_DEFAULT_ALIAS, choices=trees)
 
 
 class FieldDistribution(FieldBase):
@@ -30,15 +41,20 @@ class FieldDistribution(FieldBase):
     parametizer = FieldDistParametizer
 
     def get(self, request, pk):
+        model_version = extract_model_version(request)
+
         instance = self.get_object(request, pk=pk)
         params = self.get_params(request)
+        tree = trees[model_version['model_name']]
 
-        tree = trees[params.get('tree')]
         opts = tree.root_model._meta
-        tree_field = DataField(pk='{0}:{1}'.format(params.get('tree'), pk),
+        tree_field = DataField(pk='{0}:{1}'.format(model_version['model_name'], pk),
                                app_name=opts.app_label,
                                model_name=opts.module_name,
                                field_name=opts.pk.name)
+
+        # select avocado_datafield.id, avocado_datafield.name, avocado_datafield.allowed_values from avocado_datafield inner join avocado_datafield_schema_1 on 
+        # (avocado_datafield.id = avocado_datafield_schema_1.datafield_id) where avocado_datafield_schema_1.schema1_id=8 and avocado_datafield.name = 'Common?';
 
         # This will eventually make it's way in the parametizer, but lists
         # are not supported
@@ -125,29 +141,42 @@ class FieldDistribution(FieldBase):
 
         clustered = False
         points = list(stats)
+
         outliers = []
 
         # For N-dimensional continuous data, check if clustering should occur
         # to down-sample the data.
         if all([d.simple_type == 'number' for d in fields]):
+
+            #cast values to float if nessecary (prune non-numeric values)
+            for i in range(0, len(points)):
+                if all_numbers(points[i]['values']):
+                    points[i]['values'] = [float(str(s)) for s in points[i]['values']]
+                else:
+                    points[i]['values'] = []
+
+
             # Extract observations for clustering
             obs = []
             for point in points:
                 for i, dim in enumerate(point['values']):
                     if isinstance(dim, Decimal):
                         point['values'][i] = float(str(dim))
-                obs.append(point['values'])
+
+                if point['values']:
+                    obs.append(point['values'])
 
             # Perform k-means clustering. Determine centroids and calculate
             # the weighted count relatives to the centroid and observations
             # within the kmeans module.
             if params['cluster'] and length >= MINIMUM_OBSERVATIONS:
                 clustered = True
-
+                
                 counts = [p['count'] for p in points]
                 points, outliers = kmeans.weighted_counts(
                     obs, counts, params['n'])
             else:
+                
                 indexes = kmeans.find_outliers(obs, normalized=False)
 
                 outliers = []
@@ -155,6 +184,7 @@ class FieldDistribution(FieldBase):
                     outliers.append(points[idx])
                     points[idx] = None
                 points = [p for p in points if p is not None]
+                
 
         usage.log('dist', instance=instance, request=request, data={
             'size': length,

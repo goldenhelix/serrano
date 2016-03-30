@@ -1,17 +1,174 @@
 import functools
 from datetime import datetime
 from django.core.cache import cache
+from django.http import HttpResponse, StreamingHttpResponse
 from restlib2.params import Parametizer
 from restlib2.resources import Resource
-from avocado.models import DataContext, DataView, DataQuery
+from avocado.models import DataContext, DataView, DataQuery, DataField, DataConcept
+from ceviche.models import ModelSeries, ModelVersion
 from serrano.conf import settings
 from django.contrib.auth import authenticate, login
 from ..tokens import get_request_token
 from .. import cors
+import sys
+import urllib
+import json
+from django.db.models.sql.constants import JoinInfo
+
 
 __all__ = ('BaseResource', 'ThrottledResource')
 
 SAFE_METHODS = ('GET', 'HEAD', 'OPTIONS')
+
+def get_count(queryset):
+    query = queryset.query
+    has_where = bool(query.where.children)
+    is_project = any(t.startswith('p_') for t in query.tables)
+    if not has_where and is_project:
+        model_name = [t for t in query.tables if t.startswith('p_')][0]
+        model_name = model_name.rstrip('_entity')
+        model_name = model_name.rstrip('_matrix')
+        model_version = ModelVersion.objects.filter(model_name=model_name)[0]
+        count = model_version.aux_data["variant_count"]
+    else:
+        count = queryset.count()
+
+    return count
+
+def get_alias_map(model_name, current_alias_map):
+
+    alias_map = {}
+    if model_name=='projectsample':
+        alias_map['sample_record_schema'] = JoinInfo(table_name='sample_record_schema', rhs_alias='sample_record_schema', join_type=None, lhs_alias=None, lhs_join_col=None, \
+                                                            rhs_join_col=None, nullable=False)
+    else:
+        alias_map[model_name] = JoinInfo(table_name=model_name, rhs_alias=model_name, join_type=None, lhs_alias=None, lhs_join_col=None, \
+                                                            rhs_join_col=None, nullable=False) 
+
+        # make sure to include joins on sample tables
+        for table in current_alias_map:
+            if not table==model_name:
+                alias_map[table] = current_alias_map[table]
+
+    print 'alias_map: ', alias_map
+    return alias_map
+
+def get_url(value, template):
+    url = ""
+    if template=='AUTO_RSID_OR_COSM':
+        if value.startswith('COSM'):
+            value = value.split('COSM')[1]
+            template = 'http://grch37-cancer.sanger.ac.uk/cosmic/mutation/overview?id=$$'
+        else:
+            template = 'http://www.ncbi.nlm.nih.gov/projects/SNP/snp_ref.cgi?rs=$$'
+                    
+    if '$$' in template:
+        tsplit = template.split('$$')
+        url = tsplit[0] + str(value) + tsplit[1]
+
+    return url
+
+# Returns a map of values to urls
+def url_from_template(value, template):
+
+    # try to load lists if they are encoded as strings
+    if isinstance(value, basestring):
+        if ';' in value:
+            value = value.split(';')
+        else:
+            try:
+                value = json.loads(value.replace("'", '"'))
+            except ValueError:
+                pass
+
+        # don't urlify n/a
+        if value and type(value)==list or isinstance(value, basestring):
+            if value and 'n/a' in value:
+                value = None
+
+    urls = {}
+    if  template and value:
+        
+
+        if type(value)==list:
+            for v in value:
+                if v is None:
+                    continue
+                if type(v)==list:
+                    v = str(v)
+                urls[v] = get_url(v, template)
+        else:
+            urls[value] = get_url(value, template)
+
+
+    return urls
+            
+
+
+def prune_view_columns(view, model_version_id):
+    # get required concept objects
+    order = {c.id:c.order for c in DataConcept.objects.filter(published=True)}
+    for key in order:
+        if not order[key]:
+            order[key] = sys.maxint
+
+    if 'columns' not in view.json:
+        concepts = [c.id for c in DataConcept.objects.filter(published=True, is_default=True)]
+        view.json['columns'] = []
+        for concept_id in concepts:
+            view.json["columns"].append(concept_id)
+
+    column_list = []
+    print 'for each column:'
+    for c in view.json['columns']:
+        concept = DataConcept.objects.get(id=c)
+        if concept.model_version_id==model_version_id:
+            column_list.append(c)
+
+    view.json['columns'] = column_list
+
+    return view   
+
+def extract_model_version(request):
+    
+    url_components = []
+
+    if 'PATH_INFO' in request.META: url_components = request.META['PATH_INFO'].split('/')
+    if not ('query' in url_components or 'results' in url_components or 'workspace' in url_components): 
+        if 'HTTP_REFERER' in request.META:
+            url_components = request.META['HTTP_REFERER'].split('/')
+        else:
+            return {}
+
+    url_components = [urllib.unquote(s) for s in url_components]
+ 
+    series_version = int(url_components[len(url_components)-3])
+    series_id = int(url_components[len(url_components)-4].split('-')[0])
+    model_type, record_type = url_components[len(url_components)-5].split('_')
+    model_version = ModelVersion.objects.get(series__id=series_id, version=series_version, series__model_type=model_type, series__record_type=record_type)
+        
+    model_version_data = model_version.__dict__   
+    model_version_data['model_type']  = model_version.series.model_type
+    model_version_data['record_type'] = model_version.series.record_type
+    model_version_data['series_name'] = model_version.series.name
+
+    return model_version_data
+
+
+def page_type(request):
+    if 'PATH_INFO' in request.META: url_components = request.META['PATH_INFO'].split('/')
+    if not ('query' in url_components or 'results' in url_components or 'workspace' in url_components): url_components = request.META['HTTP_REFERER'].split('/')
+    if 'query' in url_components: return 'query'
+    elif 'results' in url_components: return 'results'
+    else: return 'other'
+
+def map_concepts_to_models():
+    query = ("select avocado_datafield.id, conceptfield.concept_id, avocado_datafield.model_name from (select * from "
+    "avocado_dataconcept inner join avocado_dataconceptfield on avocado_dataconcept.id=avocado_dataconceptfield.concept_id) "
+    "as conceptfield left outer join avocado_datafield on avocado_datafield.id=conceptfield.field_id;")
+    results = DataConcept.objects.raw(query)
+
+    return {r.concept_id : r.model_name for r in results} 
 
 
 def _get_request_object(request, attrs=None, klass=None, key=None):
@@ -75,6 +232,10 @@ def _get_request_object(request, attrs=None, klass=None, key=None):
         if request.session.session_key is None:
             return klass()
         kwargs['session_key'] = request.session.session_key
+
+    if klass==DataContext or klass==DataView:
+        model_version = extract_model_version(request)
+        kwargs['model_version_id'] = model_version['id']
 
     # Assume it is a primary key and fallback to the sesssion
     try:
@@ -218,11 +379,36 @@ class BaseResource(Resource):
 
     def get_view(self, request, attrs=None):
         "Returns a DataView object based on `attrs` or the request."
-        return get_request_view(request, attrs=attrs)
+        view = get_request_view(request, attrs=attrs)
+        return view
 
     def get_query(self, request, attrs=None):
         "Returns a DataQuery object based on `attrs` or the request."
         return get_request_query(request, attrs=attrs)
+
+    def dispatch(self, request, *args, **kwargs):
+        # Process the request. This includes all the necessary checks prior to
+        # actually interfacing with the resource itself.
+        response = self.process_request(request, *args, **kwargs)
+
+        if not isinstance(response, HttpResponse):
+            # Attempt to process the request given the corresponding
+            # `request.method` handler.
+            method_handler = getattr(self, request.method.lower())
+            response = method_handler(request, *args, **kwargs)
+
+            if isinstance(response, StreamingHttpResponse):
+                return response
+
+            if not isinstance(response, HttpResponse):
+                # If the return value of the handler is not a response, pass
+                # the return value into the render method.
+                response = self.render(request, response, args=args,
+                                       kwargs=kwargs)
+
+        # Process the response, check if the response is overridden and
+        # use that instead.
+        return self.process_response(request, response)
 
     @property
     def checks_for_orphans(self):

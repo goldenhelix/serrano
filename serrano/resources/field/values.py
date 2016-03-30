@@ -7,7 +7,8 @@ from restlib2.params import StrParam, IntParam, BoolParam
 from avocado.events import usage
 from avocado.query import pipeline
 from ..pagination import PaginatorResource, PaginatorParametizer
-from .base import FieldBase
+from .base import FieldBase, extract_model_version
+from avocado.models import DataConcept, DataField;
 
 
 log = logging.getLogger(__name__)
@@ -40,14 +41,34 @@ class FieldValues(FieldBase, PaginatorResource):
             context = self.get_context(request, attrs={})
         return context.apply(queryset=instance.model.objects.all())
 
-    def get_all_values(self, request, instance, queryset):
+    def get_all_values(self, request, instance, queryset, field_id):
         "Returns all distinct values for this field."
+        result = DataField.objects.get(id=field_id)
+
+        model_version = extract_model_version(request)
+
         results = []
-        for value, label in instance.choices(queryset=queryset):
-            results.append({
-                'label': label,
-                'value': value,
-            })
+
+        # if a list of allowed values is specified in database, use those
+        if result.allowed_values:
+            for value in sorted(result.allowed_values) + ['Missing']:
+            
+                results.append({
+                    'label': value.replace('"', ''),
+                    'value': value,
+                })
+        else:
+            for value, label in instance.choices(queryset=queryset):
+                results.append({
+                    'label': label.replace('"', ''),
+                    'value': value,
+                })
+            if result.type=='Boolean':
+                results.append({
+                    'label': 'Missing',
+                    'value': 'Missing',
+                })
+
         return results
 
     def get_search_values(self, request, instance, query, queryset):
@@ -120,7 +141,7 @@ class FieldValues(FieldBase, PaginatorResource):
             values = self.get_search_values(
                 request, instance, params['query'], queryset)
         else:
-            values = self.get_all_values(request, instance, queryset)
+            values = self.get_all_values(request, instance, queryset, pk)
 
         # No page specified, return everything.
         if page is None:

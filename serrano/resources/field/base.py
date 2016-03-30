@@ -8,11 +8,12 @@ from avocado.conf import OPTIONAL_DEPS
 from avocado.models import DataField
 from avocado.events import usage
 from serrano.conf import settings
-from ..base import ThrottledResource
+from ..base import ThrottledResource, extract_model_version
 from .. import templates
 
 can_change_field = lambda u: u.has_perm('avocado.change_datafield')
 log = logging.getLogger(__name__)
+
 
 
 def is_field_orphaned(instance):
@@ -87,9 +88,15 @@ class FieldBase(ThrottledResource):
     template = templates.Field
 
     def get_queryset(self, request):
+
+        model_version = extract_model_version(request)
+
         queryset = self.model.objects.all()
+        queryset = queryset.published(model_version_id=model_version['id'])
+        
         if not can_change_field(request.user):
-            queryset = queryset.published(user=request.user)
+            queryset = queryset.published(user=request.user, model_version_id=model_version['id'])
+    
         return queryset
 
     def get_object(self, request, **kwargs):

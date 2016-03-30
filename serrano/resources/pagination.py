@@ -3,15 +3,16 @@ from django.core.cache import cache
 from django.core.paginator import Paginator
 from avocado.core.cache import cache_key
 from avocado.conf import settings
+from ceviche.models import ModelVersion
 from restlib2.params import Parametizer, IntParam
 from restlib2.resources import Resource
+from serrano.resources.base import get_count
 
 __all__ = ('PaginatorResource', 'PaginatorParametizer')
 
-
 def _count(s):
     if isinstance(s, QuerySet):
-        return s.count()
+        return get_count(s)
 
     return len(s)
 

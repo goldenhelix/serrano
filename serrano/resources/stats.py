@@ -7,8 +7,7 @@ from avocado.models import DataContext, DataField
 from avocado.query import pipeline
 from avocado.core.cache import cache_key
 from avocado.core.cache.model import NEVER_EXPIRE
-from .base import BaseResource, ThrottledResource
-
+from .base import BaseResource, ThrottledResource, get_count
 
 class StatsResource(BaseResource):
     def get(self, request):
@@ -52,14 +51,13 @@ class CountStatsResource(ThrottledResource):
         data = []
         models = set()
         QueryProcessor = pipeline.query_processors[params['processor']]
-
         for app_name, model_name in model_names:
             # DataField used here to resolve foreign key-based fields.
             model = DataField(app_name=app_name, model_name=model_name).model
 
             # Foreign-key based fields may resolve to models that are already
             # accounted for.
-            if model in models:
+            if model in models or not model:
                 continue
 
             models.add(model)
@@ -93,7 +91,11 @@ class CountStatsResource(ThrottledResource):
                 count = cache.get(key)
 
             if count is None:
-                count = queryset.values('pk').distinct().count()
+                if model_name.startswith('p_'):
+                    queryset.query.distinct = False
+                    count = get_count(queryset.values('pk'))
+                else:
+                    count = queryset.values('pk').distinct().count()
                 cache.set(key, count, timeout=NEVER_EXPIRE)
 
             data.append({

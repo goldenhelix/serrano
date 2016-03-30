@@ -1,15 +1,15 @@
 from datetime import datetime
-from django.http import HttpResponse, Http404
+from django.http import HttpResponse, Http404, StreamingHttpResponse
 from django.conf.urls import patterns, url
 from django.core.urlresolvers import reverse
+from django.shortcuts import render
 from restlib2.params import Parametizer, IntParam, StrParam
-from modeltree.tree import MODELTREE_DEFAULT_ALIAS, trees
 from avocado.export import registry as exporters
 from avocado.query import pipeline
 from avocado.events import usage
 from ..conf import settings
 from . import API_VERSION
-from .base import BaseResource
+from .base import BaseResource, extract_model_version, prune_view_columns
 
 # Single list of all registered exporters
 EXPORT_TYPES = zip(*exporters.choices)[0]
@@ -40,10 +40,8 @@ class ExporterRootResource(BaseResource):
 
 
 class ExporterParametizer(Parametizer):
-    limit = IntParam(50)
+    limit = IntParam(20)
     processor = StrParam('default', choices=pipeline.query_processors)
-    tree = StrParam(MODELTREE_DEFAULT_ALIAS, choices=trees)
-
 
 class ExporterResource(BaseResource):
     cache_max_age = 0
@@ -57,9 +55,11 @@ class ExporterResource(BaseResource):
         resp = HttpResponse()
 
         params = self.get_params(request)
+    
+        model_version = extract_model_version(request)
 
         limit = params.get('limit')
-        tree = params.get('tree')
+        tree = model_version['model_name']
 
         page = kwargs.get('page')
         stop_page = kwargs.get('stop_page')
@@ -74,8 +74,6 @@ class ExporterResource(BaseResource):
             if page < 1:
                 raise Http404
 
-            file_tag = 'p{0}'.format(page)
-
             # Change to 0-base for calculating offset
             offset = limit * (page - 1)
 
@@ -89,15 +87,15 @@ class ExporterResource(BaseResource):
                 # 4...5 means 4 and 5, not everything up to 5 like with
                 # list slices, so 4...4 is equivalent to just 4
                 if stop_page > page:
-                    file_tag = 'p{0}-{1}'.format(page, stop_page)
-                    limit = limit * stop_page
+                    limit = limit * ((stop_page-page)+1)
 
         else:
             # When no page or range is specified, the limit does not apply.
             limit = None
-            file_tag = 'all'
 
         QueryProcessor = pipeline.query_processors[params['processor']]
+
+        view =  prune_view_columns(view, model_version['id'])
 
         processor = QueryProcessor(context=context,
                                    view=view,
@@ -105,6 +103,16 @@ class ExporterResource(BaseResource):
                                    include_pk=False)
 
         queryset = processor.get_queryset(request=request)
+
+
+        queryset.query.distinct = True
+        if model_version['model_type']=='project':
+            queryset.query.order_by = []
+            queryset.query.distinct = False
+        elif not model_version['model_type']=='sample':
+            queryset.query.order_by = queryset.query.order_by + ['chr', 'pos_start', 'pos_stop', 'ref_alts']
+
+        
 
         exporter = processor.get_exporter(exporters[export_type])
 
@@ -117,6 +125,8 @@ class ExporterResource(BaseResource):
         # down to the query.
         order_only = lambda f: not f.get('visible', True)
 
+
+        generator = getattr(exporter, "generator", None)
         if filter(order_only, view_node.facets):
             iterable = processor.get_iterable(request=request,
                                               queryset=queryset)
@@ -126,33 +136,39 @@ class ExporterResource(BaseResource):
                            resp,
                            request=request,
                            offset=offset,
-                           limit=limit)
+                           limit=limit,
+                           model_version_id=model_version['id'], model_type=model_version['model_type'])
         else:
+
             iterable = processor.get_iterable(request=request,
                                               queryset=queryset,
                                               limit=limit,
                                               offset=offset)
 
-            exporter.write(iterable,
-                           resp,
-                           request=request)
+            if callable(generator): 
+                resp = StreamingHttpResponse(exporter.generator(iterable,
+                               request=request,
+                               model_version_id=model_version['id'], model_type=model_version['model_type']))
+            else:
+                exporter.write(iterable,
+                               resp,
+                               request=request,
+                               model_version_id=model_version['id'], model_type=model_version['model_type'])
 
-        filename = '{0}-{1}-data.{2}'.format(file_tag,
-                                             datetime.now(),
-                                             exporter.file_extension)
+
+        filename = model_version['series_name'] + ' - ' + datetime.now().strftime('%Y-%m-%d') + '.' + exporter.file_extension
 
         cookie_name = settings.EXPORT_COOKIE_NAME_TEMPLATE.format(export_type)
         resp.set_cookie(cookie_name, settings.EXPORT_COOKIE_DATA)
 
-        resp['Content-Disposition'] = 'attachment; filename="{0}"'\
-                                      .format(filename)
+        resp['Content-Disposition'] = 'attachment; filename="{0}"'.format(filename)                                 
         resp['Content-Type'] = exporter.content_type
 
         usage.log('export', request=request, data={
             'type': export_type,
             'partial': page is not None,
         })
-
+        
         return resp
 
     # Resource is dependent on the available export types
@@ -160,9 +176,17 @@ class ExporterResource(BaseResource):
         return export_type not in EXPORT_TYPES
 
     def get(self, request, export_type, **kwargs):
-        view = self.get_view(request)
-        context = self.get_context(request)
-        return self._export(request, export_type, view, context, **kwargs)
+        model_version = extract_model_version(request)
+        if model_version:
+            view = self.get_view(request)
+            context = self.get_context(request)
+            view = prune_view_columns(view, model_version['id'])
+            
+            resp = self._export(request, export_type, view, context, **kwargs)
+            return resp
+        else:
+            message = 'This download has expired.'
+            return render(request, 'message.html', {'title': 'Download Expired', 'message':message, 'restricted':True})
 
     post = get
 

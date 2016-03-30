@@ -6,16 +6,46 @@ from django.core.urlresolvers import reverse
 from django.views.decorators.cache import never_cache
 from restlib2.http import codes
 from preserialize.serialize import serialize
-from avocado.models import DataView
+from avocado.models import DataView, DataConcept
 from avocado.events import usage
 from serrano.forms import ViewForm
-from .base import ThrottledResource
+from .base import ThrottledResource, extract_model_version
 from .history import RevisionsResource, ObjectRevisionsResource, \
     ObjectRevisionResource
 from . import templates
 
 log = logging.getLogger(__name__)
 
+def init_views(request, model_version_id):
+    user = request.user 
+    session = request.session._session_key
+    user_id = None
+
+    if str(user)=='AnonymousUser':
+        view_query = "select avocado_dataview.id from avocado_dataview, auth_user where avocado_dataview.session_key='" + str(session) + "'"                     
+    else:
+        view_query = "select avocado_dataview.id from avocado_dataview, auth_user where avocado_dataview.user_id=auth_user.id and auth_user.username='" + str(user) + "'"
+        try:
+            user_id = DataView.objects.raw("select id from auth_user where username='" + str(user) + "';")[0].id
+        except:
+            user_id = 1;
+            raise
+
+    view_query = view_query + " and avocado_dataview.model_version_id=" + str(model_version_id) + ";"
+
+    views = [v.id for v in  DataView.objects.raw(view_query)]
+    concepts = [v.id for v in DataConcept.objects.filter(published=True, is_default=True, model_version_id=model_version_id)]
+    if not views:
+        json = {"ordering":[],"columns":[]}
+        for concept_id in concepts:
+            json["columns"].append(concept_id)
+        if user_id:
+            form = ViewForm(request, {'json': json, 'session': True, 'user_id':user_id, 'model_version_id':model_version_id})
+        else:
+            form = ViewForm(request, {'json': json, 'session': True, 'session_key':session, 'model_version_id':model_version_id})
+
+        if form.is_valid():
+            form.save()
 
 def view_posthook(instance, data, request):
     uri = request.build_absolute_uri
@@ -74,6 +104,10 @@ class ViewBase(ThrottledResource):
 class ViewsResource(ViewBase):
     "Resource of views"
     def get(self, request):
+        model_version = extract_model_version(request)
+
+        init_views(request, model_version['id'])
+
         queryset = self.get_queryset(request)
 
         # Only create a default is a session exists
@@ -85,9 +119,14 @@ class ViewsResource(ViewBase):
                 if default:
                     queryset.append(default)
 
-        return self.prepare(request, queryset)
+        
+        view = [v for v in self.prepare(request, queryset) if v['model_version_id']==model_version['id']]
+        view = sorted(view, key=lambda r: r['modified'], reverse=True)
+
+        return view
 
     def post(self, request):
+
         form = ViewForm(request, request.data)
 
         if form.is_valid():
