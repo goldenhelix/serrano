@@ -189,6 +189,7 @@ class PreviewResource(BaseResource, PaginatorResource):
             for i in range(0, len(values)):
                 urls = url_from_template(values[i], header[i].get('url_temp', None))
                 values[i] = values[i].replace('"', '').replace("'", '').replace('[', '').replace(']', '')
+                values[i] = values[i].replace('None', '?')
                 if header[i]['name']=='Genomic Coordinate':                    
                     components = values[i].split(' ')
                     components[1] = str(int(components[1]) + 1)
@@ -211,10 +212,11 @@ class PreviewResource(BaseResource, PaginatorResource):
                     for value, url in urls.iteritems():
                         links.append('<a target="_blank" href="' + url + '">' + value + '</a>')
                     values[i] = ', '.join(links)
-    
+                
                 if values[i]==0:
                     values[i] = '0'
-                elif not values[i] or values[i]=='null' or values[i]=='<em>n/a</em>' : 
+
+                elif not values[i] or values[i]=='null' or values[i]=='<em>n/a</em>' or all(v is None for v in values[i]): 
                     values[i] = '?'
 
             objects.append({
