@@ -216,7 +216,7 @@ class PreviewResource(BaseResource, PaginatorResource):
                 if values[i]==0:
                     values[i] = '0'
 
-                elif not values[i] or values[i]=='null' or values[i]=='<em>n/a</em>' or all(v is None for v in values[i]): 
+                elif not values[i] or values[i]=='null' or values[i]=='<em>n/a</em>': 
                     values[i] = '?'
 
             objects.append({
