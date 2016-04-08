@@ -50,7 +50,6 @@ def get_alias_map(model_name, current_alias_map):
             if not table==model_name:
                 alias_map[table] = current_alias_map[table]
 
-    print 'alias_map: ', alias_map
     return alias_map
 
 def get_url(value, template):
@@ -70,7 +69,6 @@ def get_url(value, template):
 
 # Returns a map of values to urls
 def url_from_template(value, template):
-
     # try to load lists if they are encoded as strings
     if isinstance(value, basestring):
         if ';' in value:
@@ -83,7 +81,7 @@ def url_from_template(value, template):
 
         # don't urlify n/a
         if value and type(value)==list or isinstance(value, basestring):
-            if value and 'n/a' in value:
+            if value and 'n/a' in value or 'None' in value:
                 value = None
 
     urls = {}
@@ -119,7 +117,6 @@ def prune_view_columns(view, model_version_id):
             view.json["columns"].append(concept_id)
 
     column_list = []
-    print 'for each column:'
     for c in view.json['columns']:
         concept = DataConcept.objects.get(id=c)
         if concept.model_version_id==model_version_id:
