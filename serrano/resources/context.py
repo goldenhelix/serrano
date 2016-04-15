@@ -106,7 +106,7 @@ def get_chromosomes_between(chr1, chr2):
     # TODO: This hard-codes it to the human genome. We have
     # project-level info about what genome is being used, may need to
     # use it in the future here. No immediate action.
-    chromosomes = [str(i) for i in range(1, 23)] + ['X', 'Y']
+    chromosomes = [str(i) for i in range(1, 23)] + ['X', 'Y', 'M', 'MT']
     start = chromosomes.index(chr1)
     stop  = chromosomes.index(chr2)
     return chromosomes[start+1:stop] 
