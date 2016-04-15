@@ -21,7 +21,7 @@ class HTMLFormatter(Formatter):
                 continue
             # Prettify floats
             elif type(value) is float:
-                tok = filters.floatformat(value)
+                tok = str(value)
             else:
                 tok = unicode(value)
             toks.append(tok)
