@@ -159,9 +159,20 @@ def build_genomic_contexts(context, req, child, processor, tree, model_version_i
     language = 'Coordinate overlaps with region ' + child['value']
 
     if ':' not in coordinates:
-        chromosome = coordinates
-        chr_query = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':fields[chr_field_name], 'operator':'exact'}
-        return save_composite_context(req, [chr_query], 'and', processor, tree)[0], language
+        if '-' in coordinates:
+            contexts = []
+            chr1 = coordinates.split('-')[0].strip()
+            chr2 = coordinates.split('-')[1].strip()
+            # construct chromosome position context for chromosomes between chr1 and chr2
+            chromosomes = [chr1] + get_chromosomes_between(chr1, chr2) + [chr2]
+            for chromosome in chromosomes:
+                chr_child = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':fields[chr_field_name], 'operator':'exact'}
+                contexts.append(chr_child)
+            return save_composite_context(req, contexts, 'or', processor, tree)[0], language
+        else:  
+            chromosome = coordinates
+            chr_query = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':fields[chr_field_name], 'operator':'exact'}
+            return save_composite_context(req, [chr_query], 'and', processor, tree)[0], language
     elif coordinates.count(':')==1:
         chromosome, pos = coordinates.split(':')
         pos = [int(value) for value in pos.split('-')]
@@ -192,8 +203,8 @@ def build_genomic_contexts(context, req, child, processor, tree, model_version_i
         
 
     elif coordinates.count(':')==2:
-        chr1 = coordinates.split(':')[0]
-        chr2 = coordinates.split('-')[1].split(':')[0]
+        chr1 = coordinates.split(':')[0].strip()
+        chr2 = coordinates.split('-')[1].split(':')[0].strip()
         start = str(int(coordinates.split('-')[0].split(':')[1])-1)
         stop = coordinates.split('-')[1].split(':')[1]
 
