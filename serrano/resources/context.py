@@ -18,6 +18,7 @@ from .history import RevisionsResource, ObjectRevisionsResource, \
 from . import templates
 import copy
 import hashlib
+import json
 
 log = logging.getLogger(__name__)
 
@@ -30,11 +31,16 @@ def pull_samples(child, model_version_id, context_resource, request, processor, 
         sample_field = None
 
     concept = child['concept']
-
+    print 'context child: ', child
     #{u'concept': 2, u'required': False, u'enabled': True, u'value': [[4], u'_sample:Sample2'], u'field': 8576693, u'operator': u'in'}
     if type(child['value'])==list:
-        if str(child['value'][0]).startswith('_sample:'):
-            sample = child['value'][0].split(':')[1]
+        try:
+            sample_json = json.loads(child['value'][0])
+        except ValueError, e:
+            return child
+
+        if type(sample_json)==dict and 'samples' in sample_json:
+            sample = sample_json['samples']
             child['value'] = child['value'][1]
 
             if type(child.get('operator')) is list and 'composite' not in child:
@@ -42,12 +48,16 @@ def pull_samples(child, model_version_id, context_resource, request, processor, 
                 child = { 'composite': composite_id, 'field':child['field'], 'concept':child['concept'], 
                               'language':language, 'operator':child['operator'], 'value':child['value']}
 
-            sample_child  = {'concept':concept, 'language':'Sample', 'required':False, 'value':sample, 'field':sample_field.id, 'operator':'exact'}
+            sample_child  = {'concept':concept, 'language':'Sample', 'required':False, 'value':sample, 'field':sample_field.id, 'operator':'in'}
             and_id = save_composite_context(request, [sample_child, child], 'and', processor, tree)[0]
-            language = child['language'] + ' for ' + sample
+
+            if sample_json['cohort']=='custom cohort':
+                language = child['language'] + ' for ' + ','.join(sample)
+            else: 
+                language = child['language'] + ' for cohort ' + sample_json['cohort']    
 
             new_child = { 'composite': and_id, 'field':child['field'], 'concept':child['concept'], 
-                                     'language':language, 'operator':child['operator'], 'value':child['value']}
+                                     'language':language, 'samples': sample, 'cohort':sample_json['cohort'], 'operator':child['operator'], 'value':child['value']}
 
 
             return new_child
