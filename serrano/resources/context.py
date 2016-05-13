@@ -36,7 +36,7 @@ def pull_samples(child, model_version_id, context_resource, request, processor, 
     if type(child['value'])==list:
         try:
             sample_json = json.loads(child['value'][0])
-        except ValueError, e:
+        except (ValueError, TypeError) as e:
             return child
 
         if type(sample_json)==dict and 'samples' in sample_json:
