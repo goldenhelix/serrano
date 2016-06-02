@@ -195,16 +195,18 @@ def build_genomic_contexts(context, req, child, processor, tree, model_version_i
         chr_child = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':fields[chr_field_name], 'operator':'exact'}
 
         if stop:
-            # if stop was specified then do a range query
+            # (segment1Start < segment2Stop) && (segment1Stop > segment2Start)
             start_child = {'concept':concept, 'language':'Start in range', 'required':False, 'enabled':True, 
-                           'value':[start, stop], 'field':fields[start_field_name], 'operator':'range'}
+                           'value':stop, 'field':fields[start_field_name], 'operator':'lt'}
             stop_child  = {'concept':concept, 'language':'Stop in range', 'required':False, 'enabled':True, 
-                           'value':[start, stop], 'field':fields[stop_field_name], 'operator':'range'}
-            or_id = save_composite_context(req, [start_child, stop_child], 'or', processor, tree)[0]
+                           'value':start, 'field':fields[stop_field_name], 'operator':'gt'}
+            and_id = save_composite_context(req, [start_child, stop_child], 'and', processor, tree)[0]
+            and_child  = {'concept':concept, 'language':'Start is in range or Stop is in range', 'composite':and_id}
+            
+            # (segment2Start == segment2Stop) && ((segment2Start == segment1Start) || (segment2Start == segment1Stop))
+            #if start==stop:
 
-            # build AND composite for chr and OR
-            or_child  = {'concept':concept, 'language':'Start is in range or Stop is in range', 'composite':or_id}
-            return save_composite_context(req, [chr_child, or_child], 'and', processor, tree)[0], language
+            return save_composite_context(req, [chr_child, and_child], 'and', processor, tree)[0], language
         else:
             # if stop was not specified then do an exact query
             start_child = {'concept':concept, 'language':'Start in range', 'required':False, 'enabled':True, 
@@ -221,9 +223,9 @@ def build_genomic_contexts(context, req, child, processor, tree, model_version_i
         contexts = []
         # construct context for condition ((variant.stop>query.start or variant.start>query.start) and variant.chr=query.chr1)
         first_start_child = {'concept':concept, 'language':'Start in range', 'required':False, 'enabled':True, 
-                             'value':start, 'field':fields[start_field_name], 'operator':'gte'}
+                             'value':start, 'field':fields[start_field_name], 'operator':'gt'}
         first_stop_child  = {'concept':concept, 'language':'Stop in range', 'required':False, 'enabled':True, 
-                             'value':start, 'field':fields[stop_field_name], 'operator':'gte'}
+                             'value':start, 'field':fields[stop_field_name], 'operator':'gt'}
         first_or_id = save_composite_context(req, [first_start_child, first_stop_child], 'or', processor, tree)[0]
         first_or_child  = {'concept':concept, 'language':'Start is in range or Stop is in range', 'composite':first_or_id}
 
@@ -240,9 +242,9 @@ def build_genomic_contexts(context, req, child, processor, tree, model_version_i
 
         # construct context for condition ((variant.stop<query.stop or variant.start>query.stop) and variant.chr=query.chr2)
         last_start_child = {'concept':concept, 'language':'Start in range', 'required':False, 'enabled':True, 
-                            'value':stop, 'field':fields[start_field_name], 'operator':'lte'}
+                            'value':stop, 'field':fields[start_field_name], 'operator':'lt'}
         last_stop_child  = {'concept':concept, 'language':'Stop in range', 'required':False, 'enabled':True, 
-                             'value':stop, 'field':fields[stop_field_name], 'operator':'lte'}
+                             'value':stop, 'field':fields[stop_field_name], 'operator':'lt'}
         last_or_id = save_composite_context(req, [last_start_child, last_stop_child], 'or', processor, tree)[0]
         last_or_child   = {'concept':concept, 'language':'Start is in range or Stop is in range', 'composite':last_or_id}
 
