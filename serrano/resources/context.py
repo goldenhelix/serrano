@@ -31,8 +31,7 @@ def pull_samples(child, model_version_id, context_resource, request, processor, 
         sample_field = None
 
     concept = child['concept']
-    print 'context child: ', child
-    #{u'concept': 2, u'required': False, u'enabled': True, u'value': [[4], u'_sample:Sample2'], u'field': 8576693, u'operator': u'in'}
+
     if type(child['value'])==list:
         try:
             sample_json = json.loads(child['value'][0])
