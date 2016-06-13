@@ -51,7 +51,11 @@ def pull_samples(child, model_version_id, context_resource, request, processor, 
             and_id = save_composite_context(request, [sample_child, child], 'and', processor, tree)[0]
 
             if sample_json['cohort']=='custom cohort':
-                language = child['language'] + ' for ' + ','.join(sample)
+                if len(sample) <= 4:
+                    language = child['language'] + ' for ' + ','.join(sample)
+                else:
+                    other_count = str(len(sample) - 3)
+                    language = child['language'] + ' for ' + ','.join(sample[:3]) + ', and ' + other_count + ' others'
             else: 
                 language = child['language'] + ' for cohort ' + sample_json['cohort']    
 
