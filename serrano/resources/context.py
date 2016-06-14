@@ -125,8 +125,7 @@ def get_chromosomes_between(chr1, chr2):
     return chromosomes[start+1:stop] 
 
 def build_gene_list_contexts(context, req, child, processor, tree, model_version_id):
-    
-    field = DataField.objects.get(model_version_id=model_version_id, field_name='genenames')
+    field = DataField.objects.get(id=child['field'])
     
     concept_query = ("select avocado_dataconceptfield.id, avocado_dataconcept.id as cid from avocado_dataconcept, avocado_dataconceptfield where "        
                      "avocado_dataconcept.id=avocado_dataconceptfield.concept_id and avocado_dataconceptfield.field_id=" + str(field.id) + ";")
