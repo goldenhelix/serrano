@@ -53,17 +53,13 @@ class ExporterResource(BaseResource):
     def _export(self, request, export_type, view, context, **kwargs):
         # Handle an explicit export type to a file
         resp = HttpResponse()
-
         params = self.get_params(request)
-    
         model_version = extract_model_version(request)
 
         limit = params.get('limit')
         tree = model_version['model_name']
-
         page = kwargs.get('page')
         stop_page = kwargs.get('stop_page')
-
         offset = None
 
         # Restrict export to a particular page or page range
@@ -94,9 +90,7 @@ class ExporterResource(BaseResource):
             limit = None
 
         QueryProcessor = pipeline.query_processors[params['processor']]
-
         view =  prune_view_columns(view, model_version['id'])
-
         processor = QueryProcessor(context=context,
                                    view=view,
                                    tree=tree,
@@ -109,10 +103,8 @@ class ExporterResource(BaseResource):
         if model_version['model_type']=='project':
             queryset.query.order_by = []
             queryset.query.distinct = False
-        elif not model_version['model_type']=='sample':
+        elif not model_version['record_type']=='sample':
             queryset.query.order_by = queryset.query.order_by + ['chr', 'pos_start', 'pos_stop', 'ref_alts']
-
-        
 
         exporter = processor.get_exporter(exporters[export_type])
 
@@ -124,7 +116,6 @@ class ExporterResource(BaseResource):
         # ordering facets are visible, the limit and offset can be pushed
         # down to the query.
         order_only = lambda f: not f.get('visible', True)
-
 
         generator = getattr(exporter, "generator", None)
         if filter(order_only, view_node.facets):
@@ -139,7 +130,6 @@ class ExporterResource(BaseResource):
                            limit=limit,
                            model_version_id=model_version['id'], model_type=model_version['model_type'])
         else:
-
             iterable = processor.get_iterable(request=request,
                                               queryset=queryset,
                                               limit=limit,
