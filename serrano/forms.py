@@ -71,18 +71,16 @@ class ContextForm(forms.ModelForm):
         processor = QueryProcessor(tree=self.tree)
         queryset = processor.get_queryset(request=request)
 
-
         if self.id:
             instance.id = self.id
-
-        if self.json:
-            instance.json = self.json
 
         if self.name:
             instance.name = self.name
 
         if self.keywords:
             instance.keywords = self.keywords
+
+        instance.json = self.json
 
         if commit:
             instance.save()
