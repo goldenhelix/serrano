@@ -54,9 +54,11 @@ class ContextForm(forms.ModelForm):
         request = self.request
         model_version = extract_model_version(request)
 
-        duplicate_contexts = DataContext.objects.filter(~Q(keywords = 'composite')).filter(model_version_id=model_version['id'])
-        if duplicate_contexts.filter(user=request.user).exists():
-            instance = duplicate_contexts.get(user=request.user)
+        # only one non-composite context is allowed for each user/version
+        if 'composite' not in str(self.keywords):
+            duplicate_contexts = DataContext.objects.filter(~Q(keywords = 'composite')).filter(model_version_id=model_version['id'])
+            if duplicate_contexts.filter(user=request.user).exists():
+                instance = duplicate_contexts.get(user=request.user)
 
         instance.model_version_id = model_version['id']
 
