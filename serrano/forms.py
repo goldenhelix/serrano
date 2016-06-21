@@ -8,6 +8,7 @@ from django.contrib.sites.models import get_current_site
 from django.core.exceptions import ValidationError
 from django.core.urlresolvers import reverse, NoReverseMatch
 from django.core.validators import validate_email
+from django.db.models import Q
 from avocado.models import DataContext, DataView, DataQuery
 from avocado.query import pipeline
 from serrano import utils
@@ -49,9 +50,14 @@ class ContextForm(forms.ModelForm):
 
     def save(self, commit=True, update_count=True):
         instance = super(ContextForm, self).save(commit=False)
+
         request = self.request
-        
         model_version = extract_model_version(request)
+
+        duplicate_contexts = DataContext.objects.filter(~Q(keywords = 'composite')).filter(model_version_id=model_version['id'])
+        if duplicate_contexts.filter(user=request.user).exists():
+            instance = duplicate_contexts.get(user=request.user)
+
         instance.model_version_id = model_version['id']
 
         if getattr(request, 'user', None) and request.user.is_authenticated():
@@ -96,12 +102,13 @@ class ContextForm(forms.ModelForm):
             else:
                 count = None
 
-            instance = DataContext.objects.get(id=instance.id)
+            if DataContext.objects.filter(id=instance.id).exists():
+                instance = DataContext.objects.get(id=instance.id)
 
-            # save count only if no new filters were added during calculation
-            if commit and instance.modified<=count_start:
-                instance.count = count
-                instance.save()
+                # save count only if no new filters were added during calculation
+                if commit and instance.modified<=count_start:
+                    instance.count = count
+                    instance.save()
 
         return instance
 
