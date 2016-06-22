@@ -15,6 +15,7 @@ from serrano import utils
 from serrano.conf import settings
 from serrano.resources.base import extract_model_version, get_count
 import datetime
+import traceback
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class ContextForm(forms.ModelForm):
                 instance = duplicate_contexts.get(user=request.user)
 
         instance.model_version_id = model_version['id']
-
+        
         if getattr(request, 'user', None) and request.user.is_authenticated():
             instance.user = request.user
         else:
@@ -82,13 +83,14 @@ class ContextForm(forms.ModelForm):
 
         instance.json = self.json
 
-        if commit:
+        if commit:            
             instance.save()
 
         # Only recalculated count if conditions exist. This is to
         # prevent re-counting the entire dataset. An alternative
         # solution may be desirable such as pre-computing and
         # caching the count ahead of time.
+        instance.json['sync'] = True
         if update_count:
             count_start = datetime.datetime.now()
 
@@ -107,9 +109,12 @@ class ContextForm(forms.ModelForm):
 
                 # save count only if no new filters were added during calculation
                 if commit and instance.modified<=count_start:
+                    instance.json['sync'] = True
                     instance.count = count
                     instance.save()
-
+                else:
+                    instance.json['sync'] = False
+        
         return instance
 
     class Meta(object):
