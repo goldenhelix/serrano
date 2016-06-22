@@ -23,6 +23,11 @@ SHARED_QUERY_EMAIL_TITLE = '{site_name}: {query_name} has been shared with '\
                            'you!'
 SHARED_QUERY_EMAIL_BODY = 'View the query at {query_url}'
 
+def set_sync(json, sync):
+    if json:
+        json['sync'] = True
+    return json    
+
 class ContextForm(forms.ModelForm):
     def __init__(self, request, *args, **kwargs):
         self.request = request
@@ -90,7 +95,8 @@ class ContextForm(forms.ModelForm):
         # prevent re-counting the entire dataset. An alternative
         # solution may be desirable such as pre-computing and
         # caching the count ahead of time.
-        instance.json['sync'] = True
+        
+        instance.json = set_sync(instance.json, True)
         if update_count:
             count_start = datetime.datetime.now()
 
@@ -109,12 +115,11 @@ class ContextForm(forms.ModelForm):
 
                 # save count only if no new filters were added during calculation
                 if commit and instance.modified<=count_start:
-                    instance.json['sync'] = True
+                    instance.json = set_sync(instance.json, True)
                     instance.count = count
                     instance.save()
                 else:
-                    instance.json['sync'] = False
-        
+                    instance.json = set_sync(instance.json, False)
         return instance
 
     class Meta(object):
