@@ -8,7 +8,7 @@ from avocado.query import pipeline
 from avocado.models import DataField, DataConcept;
 from avocado.export import HTMLExporter
 from restlib2.params import StrParam
-from .base import BaseResource, extract_model_version, prune_view_columns, url_from_template, get_alias_map
+from .base import BaseResource, extract_model_version, url_from_template, get_alias_map
 from .view import init_views
 from .pagination import PaginatorResource, PaginatorParametizer     
 import json

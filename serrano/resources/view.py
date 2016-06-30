@@ -34,7 +34,7 @@ def init_views(request, model_version_id):
     view_query = view_query + " and avocado_dataview.model_version_id=" + str(model_version_id) + ";"
 
     views = [v.id for v in  DataView.objects.raw(view_query)]
-    concepts = [v.id for v in DataConcept.objects.filter(published=True, is_default=True, model_version_id=model_version_id)]
+    concepts = [v.id for v in DataConcept.objects.filter(published=True, is_default=True, model_version_id=model_version_id).order_by('order')]
     if not views:
         json = {"ordering":[],"columns":[]}
         for concept_id in concepts:
