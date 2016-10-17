@@ -31,7 +31,6 @@ def pull_samples(child, model_version_id, context_resource, request, processor, 
         sample_field = None
 
     concept = child['concept']
-
     if type(child['value'])==list:
         try:
             sample_json = json.loads(child['value'][0])
@@ -41,27 +40,27 @@ def pull_samples(child, model_version_id, context_resource, request, processor, 
         if type(sample_json)==dict and 'samples' in sample_json:
             sample = sample_json['samples']
             child['value'] = child['value'][1]
+            new_child = child
+            if(sample):
+                if type(child.get('operator')) is list and 'composite' not in child:
+                    composite_id, language = build_composite_contexts(context_resource, request, child, processor, tree)
+                    child = { 'composite': composite_id, 'field':child['field'], 'concept':child['concept'], 
+                                  'language':language, 'operator':child['operator'], 'value':child['value']}
 
-            if type(child.get('operator')) is list and 'composite' not in child:
-                composite_id, language = build_composite_contexts(context_resource, request, child, processor, tree)
-                child = { 'composite': composite_id, 'field':child['field'], 'concept':child['concept'], 
-                              'language':language, 'operator':child['operator'], 'value':child['value']}
+                sample_child  = {'concept':concept, 'language':'Sample', 'required':False, 'value':sample, 'field':sample_field.id, 'operator':'in'}
+                and_id = save_composite_context(request, [sample_child, child], 'and', processor, tree)[0]
 
-            sample_child  = {'concept':concept, 'language':'Sample', 'required':False, 'value':sample, 'field':sample_field.id, 'operator':'in'}
-            and_id = save_composite_context(request, [sample_child, child], 'and', processor, tree)[0]
+                if sample_json['cohort']=='custom cohort':
+                    if len(sample) <= 4:
+                        language = child['language'] + ' for ' + ','.join(sample)
+                    else:
+                        other_count = str(len(sample) - 3)
+                        language = child['language'] + ' for ' + ','.join(sample[:3]) + ', and ' + other_count + ' others'
+                else: 
+                    language = child['language'] + ' for cohort ' + sample_json['cohort']    
 
-            if sample_json['cohort']=='custom cohort':
-                if len(sample) <= 4:
-                    language = child['language'] + ' for ' + ','.join(sample)
-                else:
-                    other_count = str(len(sample) - 3)
-                    language = child['language'] + ' for ' + ','.join(sample[:3]) + ', and ' + other_count + ' others'
-            else: 
-                language = child['language'] + ' for cohort ' + sample_json['cohort']    
-
-            new_child = { 'composite': and_id, 'field':child['field'], 'concept':child['concept'], 
-                                     'language':language, 'samples': sample, 'cohort':sample_json['cohort'], 'operator':child['operator'], 'value':child['value']}
-
+                new_child = { 'composite': and_id, 'field':child['field'], 'concept':child['concept'], 
+                                         'language':language, 'samples': sample, 'cohort':sample_json['cohort'], 'operator':child['operator'], 'value':child['value']}
 
             return new_child
     return child
