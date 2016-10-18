@@ -101,18 +101,21 @@ def build_composite_contexts(context, req, child, processor, tree):
     return save_composite_context(req, children, logic, processor, tree)
 
 def save_composite_context(req, children, logic, processor, tree):
-    request = copy.copy(req)
-    request.data['json']['type'] = logic
-    request.data['json']['children'] = children
-    form = ContextForm(request, request.data, processor=processor, tree=tree, json=request.data['json'], keywords='composite')
-    
-    instance = form.save(update_count=False)
-    language = instance.json['children'][0]['language']
-    for child in instance.json['children'][1:]:
-        if 'Missing' not in language or not child['language']:
-            language += ' ' + logic + ' ' + child['language']
+    if req:
+        request = copy.copy(req)
+        request.data['json']['type'] = logic
+        request.data['json']['children'] = children
+        form = ContextForm(request, request.data, processor=processor, tree=tree, json=request.data['json'], keywords='composite')
         
-    return instance.id, language
+        instance = form.save(update_count=False)
+        language = instance.json['children'][0]['language']
+        for child in instance.json['children'][1:]:
+            if 'Missing' not in language or not child['language']:
+                language += ' ' + logic + ' ' + child['language']
+         
+        return instance.id, language
+    else:
+        return None, None
 
 def get_chromosomes_between(chr1, chr2):
     # TODO: This hard-codes it to the human genome. We have
@@ -146,28 +149,25 @@ def build_gene_list_contexts(context, req, child, processor, tree, model_version
     query = {'concept':concept, 'language':language, 'required':False, 'value':values, 'field':field.id, 'operator':'in'}
     return save_composite_context(req, [query], 'and', processor, tree)[0], language 
 
-def build_genomic_contexts(context, req, child, processor, tree, model_version_id):
-    
+def build_genomic_query(coordinates, model_version_id, tree, request=None, processor=None):
     field_query = ("select * from avocado_datafield where model_version_id='" + str(model_version_id) + "' and name in ('Pos Start', 'Pos Stop', 'Chromosome', 'Start', 'Stop', 'Chr');")
     fields = {f.name:f.id for f in DataField.objects.raw(field_query)}
-    if 'Pos Start' in fields:
-        chr_field_name   = 'Chromosome'
-        start_field_name = 'Pos Start'
-        stop_field_name  = 'Pos Stop'
-    else:
-        chr_field_name   = 'Chr'
-        start_field_name = 'Start'
-        stop_field_name  = 'Stop'
-
-    stop_field = [f.id for f in DataField.objects.raw(field_query)][0]
+    language = 'Coordinate overlaps with region ' + coordinates
+    coordinates = coordinates.replace('Chr', '').replace('chr', '').replace(',', '')
     
+    if 'Pos Start' in fields:
+        chr_field = {'id':fields['Chromosome'], 'name':'Chromosome', 'symbol':'chr'}
+        start_field = {'id':fields['Pos Start'], 'name':'Pos Start', 'symbol':'start'}
+        stop_field  = {'id':fields['Pos Stop'], 'name':'Pos Stop', 'symbol':'stop'}
+    else:
+        chr_field   = {'id':fields['Chr'], 'name':'Chr', 'symbol':'chr'}
+        start_field = {'id':fields['Start'], 'name':'Start', 'symbol':'pos_start'}
+        stop_field  = {'id':fields['Stop'], 'name':'Stop', 'symbol':'pos_stop'}
+
     concept_query = ("select avocado_dataconceptfield.id, avocado_dataconcept.id as cid from avocado_dataconcept, avocado_dataconceptfield where "        
-                     "avocado_dataconcept.id=avocado_dataconceptfield.concept_id and avocado_dataconceptfield.field_id=" + str(stop_field) + ";")
+                     "avocado_dataconcept.id=avocado_dataconceptfield.concept_id and avocado_dataconceptfield.field_id=" + str(stop_field['id']) + ";")
 
     concept = [c.cid for c in DataConcept.objects.raw(concept_query)][0]
-
-    coordinates = child['value'].replace('Chr', '').replace('chr', '').replace(',', '')
-    language = 'Coordinate overlaps with region ' + child['value']
 
     if ':' not in coordinates:
         if '-' in coordinates:
@@ -176,14 +176,19 @@ def build_genomic_contexts(context, req, child, processor, tree, model_version_i
             chr2 = coordinates.split('-')[1].strip()
             # construct chromosome position context for chromosomes between chr1 and chr2
             chromosomes = [chr1] + get_chromosomes_between(chr1, chr2) + [chr2]
+            clauses = []
             for chromosome in chromosomes:
-                chr_child = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':fields[chr_field_name], 'operator':'exact'}
+                clauses.append("chr = '" + chromosome + "'")
+                chr_child = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':chr_field['id'], 'operator':'exact'}
                 contexts.append(chr_child)
-            return save_composite_context(req, contexts, 'or', processor, tree)[0], language
+
+            context_query = save_composite_context(request, contexts, 'or', processor, tree)[0]
+            sql_query = '(' + ' OR '.join(clauses) + ')'
         else:  
             chromosome = coordinates
-            chr_query = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':fields[chr_field_name], 'operator':'exact'}
-            return save_composite_context(req, [chr_query], 'and', processor, tree)[0], language
+            chr_query = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':chr_field['id'], 'operator':'exact'}
+            context_query = save_composite_context(request, [chr_query], 'and', processor, tree)[0]
+            sql_query = "chr = '" + chromosome + "'"
     elif coordinates.count(':')==1:
         chromosome, pos = coordinates.split(':')
         pos = [int(value) for value in pos.split('-')]
@@ -193,68 +198,95 @@ def build_genomic_contexts(context, req, child, processor, tree, model_version_i
             stop = pos[1]
 
         # build CHR child
-        chr_child = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':fields[chr_field_name], 'operator':'exact'}
+        chr_child = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':chr_field['id'], 'operator':'exact'}
+        chr_query = "chr = '" + chromosome + "'"
 
         if stop:
-            # (segment1Start < segment2Stop) && (segment1Stop > segment2Start)
+            # if stop was specified then do a range query
             start_child = {'concept':concept, 'language':'Start in range', 'required':False, 'enabled':True, 
-                           'value':stop, 'field':fields[start_field_name], 'operator':'lt'}
+                           'value':stop, 'field':start_field['id'], 'operator':'lt'}
             stop_child  = {'concept':concept, 'language':'Stop in range', 'required':False, 'enabled':True, 
-                           'value':start, 'field':fields[stop_field_name], 'operator':'gt'}
-            and_id = save_composite_context(req, [start_child, stop_child], 'and', processor, tree)[0]
-            and_child  = {'concept':concept, 'language':'Start is in range or Stop is in range', 'composite':and_id}
-            
-            # (segment2Start == segment2Stop) && ((segment2Start == segment1Start) || (segment2Start == segment1Stop))
-            #if start==stop:
+                           'value':start, 'field':stop_field['id'], 'operator':'gt'}
+            start_query = start_field['symbol'] + ' BETWEEN ' + str(start)  + ' and ' + str(stop)
+            stop_query  = stop_field['symbol']  + ' BETWEEN ' + str(start)  + ' and ' + str(stop)
 
-            return save_composite_context(req, [chr_child, and_child], 'and', processor, tree)[0], language
+            # build AND composite for chr and OR
+            and_id = save_composite_context(request, [start_child, stop_child], 'and', processor, tree)[0]
+            and_child  = {'concept':concept, 'language':'Start is in range or Stop is in range', 'composite':and_id}
+            or_query  = '(' + start_query + ' OR ' + stop_query + ')'
+            sql_query = '(' + or_query + ' AND ' + chr_query + ')'
+            
+            # (segment2Start == segment2Stop) && ((segment2Start == segment1Start) || (segment2Start == segment1Stop)) 
+            context_query = save_composite_context(request, [chr_child, and_child], 'and', processor, tree)[0]
         else:
             # if stop was not specified then do an exact query
             start_child = {'concept':concept, 'language':'Start in range', 'required':False, 'enabled':True, 
-                       'value':start, 'field':fields[start_field_name], 'operator':'exact'}
-            return save_composite_context(req, [chr_child, start_child], 'and', processor, tree)[0], language
-        
-
+                       'value':start, 'field':start_field['id'], 'operator':'exact'}
+            start_query = start_field['symbol'] + ' = ' + str(start)
+            sql_query = '(' + start_query + ' AND ' + chr_query + ')'
+            context_query = save_composite_context(request, [chr_child, start_child], 'and', processor, tree)[0]
     elif coordinates.count(':')==2:
         chr1 = coordinates.split(':')[0].strip()
         chr2 = coordinates.split('-')[1].split(':')[0].strip()
         start = str(int(coordinates.split('-')[0].split(':')[1])-1)
         stop = coordinates.split('-')[1].split(':')[1]
 
+        clauses = []
         contexts = []
+        # construct sql for condition ((variant.stop>query.start or variant.start>query.start) and variant.chr=query.chr1)
+        first_start_query = start_field['symbol'] + ' >= ' + str(start)
+        first_stop_query  = stop_field['symbol']  + ' >= ' + str(start)
+        first_or_query = '(' + first_start_query + ' OR ' + first_stop_query + ')'
+        first_chr_query = "chr = '" + chr1 + "'"
+        first_and_query = '(' + first_or_query + ' AND ' + first_chr_query + ')'
+        clauses.append(first_and_query)
+
         # construct context for condition ((variant.stop>query.start or variant.start>query.start) and variant.chr=query.chr1)
         first_start_child = {'concept':concept, 'language':'Start in range', 'required':False, 'enabled':True, 
-                             'value':start, 'field':fields[start_field_name], 'operator':'gt'}
+                             'value':start, 'field':start_field['id'], 'operator':'gt'}
         first_stop_child  = {'concept':concept, 'language':'Stop in range', 'required':False, 'enabled':True, 
-                             'value':start, 'field':fields[stop_field_name], 'operator':'gt'}
-        first_or_id = save_composite_context(req, [first_start_child, first_stop_child], 'or', processor, tree)[0]
+                             'value':start, 'field':stop_field['id'], 'operator':'gt'}
+        first_or_id = save_composite_context(request, [first_start_child, first_stop_child], 'or', processor, tree)[0]
         first_or_child  = {'concept':concept, 'language':'Start is in range or Stop is in range', 'composite':first_or_id}
-
-        first_chr_child = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chr1, 'field':fields[chr_field_name], 'operator':'exact'}
-        first_and_id = save_composite_context(req, [first_chr_child, first_or_child], 'and', processor, tree)[0]
+        first_chr_child = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chr1, 'field':chr_field['id'], 'operator':'exact'}
+        first_and_id = save_composite_context(request, [first_chr_child, first_or_child], 'and', processor, tree)[0]
         first_and_child = {'concept':concept, 'language':'Start or Stop is in first chromosome range', 'composite':first_and_id}
         contexts.append(first_and_child)
 
-        # construct chromosome position context for chromosomes between chr1 and chr2
+        # construct chromosome position context for chromosomes between chr1 and chr2        
         chromosomes = get_chromosomes_between(chr1, chr2)
         for chromosome in chromosomes:
-            chr_child = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':fields[chr_field_name], 'operator':'exact'}
-            contexts.append(chr_child)
+            clauses.append("chr = '" + chromosome + "'")
+            chr_child_json = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chromosome, 'field':chr_field['id'], 'operator':'exact'}
+            contexts.append(chr_child_json)
+            
+        # construct sql for condition ((variant.stop<query.stop or variant.start>query.stop) and variant.chr=query.chr2)
+        last_start_query = start_field['symbol'] + '<= ' + str(stop)
+        last_stop_query  = stop_field['symbol']  + '<= ' + str(stop)
+        last_or_query    = '(' + last_start_query + ' OR ' + last_stop_query + ')'
+        last_chr_query = "chr = '" + chr2 + "'"
+        last_and_query = '(' + last_or_query + ' AND ' + last_chr_query + ')'
+        clauses.append(last_and_query)
+        sql_query = '(' + ' OR '.join(clauses) + ')'
 
-        # construct context for condition ((variant.stop<query.stop or variant.start>query.stop) and variant.chr=query.chr2)
+        # construct json for condition ((variant.stop<query.stop or variant.start>query.stop) and variant.chr=query.chr2)
         last_start_child = {'concept':concept, 'language':'Start in range', 'required':False, 'enabled':True, 
-                            'value':stop, 'field':fields[start_field_name], 'operator':'lt'}
+                            'value':stop, 'field':start_field['id'], 'operator':'lt'}
         last_stop_child  = {'concept':concept, 'language':'Stop in range', 'required':False, 'enabled':True, 
-                             'value':stop, 'field':fields[stop_field_name], 'operator':'lt'}
-        last_or_id = save_composite_context(req, [last_start_child, last_stop_child], 'or', processor, tree)[0]
+                             'value':stop, 'field':stop_field['id'], 'operator':'lt'}
+        last_or_id = save_composite_context(request, [last_start_child, last_stop_child], 'or', processor, tree)[0]
         last_or_child   = {'concept':concept, 'language':'Start is in range or Stop is in range', 'composite':last_or_id}
-
-        last_chr_child  = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chr2, 'field':fields[chr_field_name], 'operator':'exact'}
-        last_and_id = save_composite_context(req, [last_chr_child, last_or_child], 'and', processor, tree)[0]
+        last_chr_child  = {'concept':concept, 'language':'Chromosome equals', 'required':False, 'value':chr2, 'field':chr_field['id'], 'operator':'exact'}
+        last_and_id = save_composite_context(request, [last_chr_child, last_or_child], 'and', processor, tree)[0]
         last_and_child = {'concept':concept, 'language':'Start or Stop is in last chromosome range', 'composite':last_and_id}
         contexts.append(last_and_child)
-        return save_composite_context(req, contexts, 'or', processor, tree)[0], language
-    
+        context_query = save_composite_context(request, contexts, 'or', processor, tree)[0]
+
+    return context_query, sql_query, language
+
+def build_genomic_contexts(context, req, child, processor, tree, model_version_id):
+    context_query, sql_query, language = build_genomic_query(child['value'], model_version_id, tree, request=req, processor=processor)
+    return context_query, language
     
 def gen_id(s):
     #use hash to generate id
@@ -317,7 +349,7 @@ def update_children(context_resource, model_version_id, model_type, request, pro
             else:
 
                 newchildren.append(child)
-
+        
         request.data['json']['children'] = newchildren
         request.data['json']['type'] = 'and' 
 
@@ -434,7 +466,6 @@ class ContextsResource(ContextBase):
         request = update_children(self, model_version['id'], model_version['model_type'], request, processor, tree)
         
         form = ContextForm(request, request.data, processor=processor, tree=tree, json=request.data['json'])
-
         instance = form.save()
         usage.log('create', instance=instance, request=request)
 
