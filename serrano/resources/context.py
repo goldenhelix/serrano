@@ -160,7 +160,10 @@ def build_genomic_query(coordinates, model_version_id, tree, request=None, proce
         start_field = {'id':fields['Pos Start'], 'name':'Pos Start', 'symbol':'start'}
         stop_field  = {'id':fields['Pos Stop'], 'name':'Pos Stop', 'symbol':'stop'}
     else:
-        chr_field   = {'id':fields['Chr'], 'name':'Chr', 'symbol':'chr'}
+        if 'Chr' in fields:
+            chr_field   = {'id':fields['Chr'], 'name':'Chr', 'symbol':'chr'}
+        else:
+            chr_field   = {'id':fields['Chromosome'], 'name':'Chr', 'symbol':'chr'}
         start_field = {'id':fields['Start'], 'name':'Start', 'symbol':'pos_start'}
         stop_field  = {'id':fields['Stop'], 'name':'Stop', 'symbol':'pos_stop'}
 
