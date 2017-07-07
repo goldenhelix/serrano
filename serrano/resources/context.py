@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 from django.conf.urls import patterns, url
 from django.core.urlresolvers import reverse
+from django.db import connection
 from django.views.decorators.cache import never_cache
 from restlib2.http import codes
 from restlib2.params import Parametizer, StrParam
@@ -11,6 +12,7 @@ from modeltree.tree import trees
 from avocado.events import usage
 from avocado.models import DataContext, DataConcept, DataField
 from avocado.query import pipeline
+from ceviche.models import ModelVersion
 from serrano.forms import ContextForm
 from .base import ThrottledResource, extract_model_version
 from .history import RevisionsResource, ObjectRevisionsResource, \
@@ -21,6 +23,17 @@ import hashlib
 import json
 
 log = logging.getLogger(__name__)
+
+def get_all_samples(model_version_id):
+    cursor = connection.cursor()
+    model_version = ModelVersion.objects.get(id=model_version_id)
+    entity_table = model_version.model_name + '_entity'
+    query = ('SELECT ' + entity_table + '."samples" '
+             'FROM ' + entity_table + ', sample_record_schema '
+             'WHERE ' + entity_table + '.samples=sample_record_schema.id;');
+    cursor.execute(query)
+    samples = [r[0] for r in cursor.fetchall()]
+    return samples
 
 # pulls the sample info from the child if it exists
 # then constructs a composite query with both the sample and query field 
@@ -39,6 +52,8 @@ def pull_samples(child, model_version_id, context_resource, request, processor, 
 
         if type(sample_json)==dict and 'samples' in sample_json:
             sample = sample_json['samples']
+            if '_all_' in sample:
+                sample = get_all_samples(model_version_id)
             child['value'] = child['value'][1]
             new_child = child
             if(sample):
