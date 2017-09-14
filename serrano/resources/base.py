@@ -143,11 +143,13 @@ def extract_model_version(request):
     series_id = int(url_components[len(url_components)-4].split('-')[0])
     model_type, record_type = url_components[len(url_components)-5].split('_')
     model_version = ModelVersion.objects.get(series__id=series_id, version=series_version, series__model_type=model_type, series__record_type=record_type)
+    record_type = model_version.series.record_type
         
     model_version_data = model_version.__dict__   
     model_version_data['model_type']  = model_version.series.model_type
-    model_version_data['record_type'] = model_version.series.record_type
+    model_version_data['record_type'] = record_type
     model_version_data['series_name'] = model_version.series.name
+    model_version_data['keys'] = model_version.series.aux_data.get("keys", [])
 
     return model_version_data
 
