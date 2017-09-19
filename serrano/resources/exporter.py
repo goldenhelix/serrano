@@ -103,7 +103,7 @@ class ExporterResource(BaseResource):
         if model_version['model_type']=='project':
             queryset.query.order_by = []
             queryset.query.distinct = False
-        elif model_version['record_type']=='region':
+        elif model_version['record_type'] in ['region', 'cnv']:
             queryset.query.order_by = queryset.query.order_by + ['chr', 'pos_start', 'pos_stop']
             for key in model_version["keys"]:
                 queryset.query.order_by.append(key["symbol"])
