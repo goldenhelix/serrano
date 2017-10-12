@@ -89,8 +89,10 @@ class PreviewResource(BaseResource, PaginatorResource):
             queryset.query.order_by = queryset.query.order_by + ['id']
         elif model_version['model_type']=='project':
             queryset.query.distinct = False
-        elif model_version['model_type']=='assessment':
-            queryset.query.order_by = queryset.query.order_by + ['chr', 'pos_start', 'pos_stop', 'ref_alts']
+        elif model_version['model_type'] == 'catalog':
+            queryset.query.order_by = queryset.query.order_by + ['chr', 'pos_start', 'pos_stop']
+            if model_version['record_type'] == 'variant':
+                queryset.query.order_by.append('ref_alts')
 
         # Get paginator and page
         queryset.query.select = [s for s in queryset.query.select if s[0] in queryset.query.alias_map]
