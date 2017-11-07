@@ -39,7 +39,7 @@ def get_all_samples(model_version_id):
 # then constructs a composite query with both the sample and query field 
 def pull_samples(child, model_version_id, context_resource, request, processor, tree):
     try:
-        sample_field = DataField.objects.get(model_version_id=model_version_id, field_name='samples')
+        sample_field = DataField.objects.get(model_version_id=model_version_id, field_name='samples', type='Sample')
     except:
         sample_field = None
 
