@@ -4,6 +4,7 @@ except ImportError:
     from ordereddict import OrderedDict
 from django.conf.urls import patterns, url
 from django.core.urlresolvers import reverse
+from django.utils import html
 from avocado.query import pipeline
 from avocado.models import DataField, DataConcept;
 from avocado.export import HTMLExporter
@@ -12,7 +13,6 @@ from .base import BaseResource, extract_model_version, url_from_template, get_al
 from .view import init_views
 from .pagination import PaginatorResource, PaginatorParametizer     
 import json
-import cgi
 
 def get_facet(facets, concept_id):
     for d in facets:
@@ -211,8 +211,8 @@ class PreviewResource(BaseResource, PaginatorResource):
                             values[i] = str(values[i])
 
                 if isinstance(values[i], basestring):
-                    values[i] = cgi.escape(values[i])
-                
+                    values[i] = html.escape(values[i])
+
                 if urls:
                     links = []
                     for value, url in urls.iteritems():
