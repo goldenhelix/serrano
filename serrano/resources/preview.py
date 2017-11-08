@@ -12,6 +12,7 @@ from .base import BaseResource, extract_model_version, url_from_template, get_al
 from .view import init_views
 from .pagination import PaginatorResource, PaginatorParametizer     
 import json
+import cgi
 
 def get_facet(facets, concept_id):
     for d in facets:
@@ -208,6 +209,9 @@ class PreviewResource(BaseResource, PaginatorResource):
                             values[i] = int(float(values[i]))
                         except ValueError:
                             values[i] = str(values[i])
+
+                if isinstance(values[i], basestring):
+                    values[i] = cgi.escape(values[i])
                 
                 if urls:
                     links = []
@@ -217,7 +221,6 @@ class PreviewResource(BaseResource, PaginatorResource):
                 
                 if values[i]==0:
                     values[i] = '0'
-
                 elif not values[i] or values[i]=='null' or values[i]=='<em>n/a</em>': 
                     values[i] = '?'
 
