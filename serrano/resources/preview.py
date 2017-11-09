@@ -210,7 +210,7 @@ class PreviewResource(BaseResource, PaginatorResource):
                         except ValueError:
                             values[i] = str(values[i])
 
-                if isinstance(values[i], basestring):
+                if isinstance(values[i], basestring) and values[i] != '<em>n/a</em>':
                     values[i] = html.escape(values[i])
 
                 if urls:
